@@ -285,11 +285,13 @@ static int create_subprocess(const char *cmd, const char *arg0, const char *arg1
     }
     fcntl(ptm, F_SETFD, FD_CLOEXEC);
 
+#ifndef __OpenBSD__ /* XXX */
     if(grantpt(ptm) || unlockpt(ptm) ||
        ((devname = (char*) ptsname(ptm)) == 0)){
         printf("[ trouble with /dev/ptmx - %s ]\n", strerror(errno));
         return -1;
     }
+#endif
 
     pid = fork();
     if(pid < 0) {

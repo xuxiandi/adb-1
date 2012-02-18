@@ -349,6 +349,7 @@ static int sync_send(int fd, const char *lpath, const char *rpath,
 
         adb_close(lfd);
 
+#ifndef __OpenBSD__ /* XXX: need libzipfile */
         zip = init_zipfile(file_buffer, size);
         if (zip == NULL) {
             fprintf(stderr, "file '%s' is not a valid zip file\n",
@@ -365,6 +366,7 @@ static int sync_send(int fd, const char *lpath, const char *rpath,
             free(file_buffer);
             return 1;
         }
+#endif
     }
 
     msg.req.id = ID_SEND;
