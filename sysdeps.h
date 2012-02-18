@@ -270,6 +270,10 @@ static __inline__  int  adb_is_absolute_host_path( const char*  path )
 #include <netinet/tcp.h>
 #include <string.h>
 
+#ifdef __OpenBSD__
+#include <sys/socket.h>
+#endif
+
 #define OS_PATH_SEPARATOR '/'
 #define OS_PATH_SEPARATOR_STR "/"
 
