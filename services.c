@@ -35,6 +35,11 @@
 #  include <sys/reboot.h>
 #endif
 
+#ifdef __OpenBSD__
+#include <termios.h>
+#include <util.h>
+#endif
+
 typedef struct stinfo stinfo;
 
 struct stinfo {
@@ -273,7 +278,30 @@ static int create_subprocess(const char *cmd, const char *arg0, const char *arg1
 #ifdef HAVE_WIN32_PROC
 	fprintf(stderr, "error: create_subprocess not implemented on Win32 (%s %s %s)\n", cmd, arg0, arg1);
 	return -1;
-#else /* !HAVE_WIN32_PROC */
+#elif __OpenBSD__
+    int fd;
+    struct winsize ws;
+
+    memset(&ws, 0, sizeof(ws));
+
+    switch (forkpty(&fd, NULL, NULL, &ws)) {
+    case -1:
+        printf("[ cannot forkpty - %s ]\n",strerror(errno));
+        return -1;
+
+    case 0:
+        setsid();
+
+        execl(cmd, cmd, arg0, arg1, NULL);
+        fprintf(stderr, "- exec '%s' failed: %s (%d) -\n",
+                cmd, strerror(errno), errno);
+        exit(-1);
+
+    default:
+    	return fd;
+    }
+
+#else
     char *devname;
     int ptm;
     pid_t pid;
@@ -285,13 +313,11 @@ static int create_subprocess(const char *cmd, const char *arg0, const char *arg1
     }
     fcntl(ptm, F_SETFD, FD_CLOEXEC);
 
-#ifndef __OpenBSD__ /* XXX */
     if(grantpt(ptm) || unlockpt(ptm) ||
        ((devname = (char*) ptsname(ptm)) == 0)){
         printf("[ trouble with /dev/ptmx - %s ]\n", strerror(errno));
         return -1;
     }
-#endif
 
     pid = fork();
     if(pid < 0) {
@@ -332,7 +358,7 @@ static int create_subprocess(const char *cmd, const char *arg0, const char *arg1
 #endif
         return ptm;
     }
-#endif /* !HAVE_WIN32_PROC */
+#endif /* !HAVE_WIN32_PROC && !__OpenBSD__ */
 }
 
 #if ADB_HOST

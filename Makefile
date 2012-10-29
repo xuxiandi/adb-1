@@ -1,6 +1,6 @@
 CC?=		cc
 CFLAGS+=	-O2 -Wall -Wunused \
-		-DADB_HOST=1 -D_XOPEN_SOURCE -D_GNU_SOURCE -DHAVE_FORKEXEC \
+		-DADB_HOST=1 -DHAVE_FORKEXEC \
 		-I. -Iinclude -I/usr/local/include/libusb-1.0 \
 		-I/usr/local/include
 CFLAGS+=	-g
@@ -34,7 +34,7 @@ OBJS	=	adb.o \
 		libcutils/socket_loopback_server.o
 
 LDPATH+=	-L/usr/local/lib
-LIBS=		-lpthread -lusb-1.0
+LIBS=		-pthread -lutil -lusb-1.0
 
 all: $(PROG)
 
