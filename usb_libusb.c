@@ -17,9 +17,9 @@
  * limitations under the License.
  */
 
+#include <sys/types.h>
 #include <sys/endian.h>
 #include <sys/ioctl.h>
-#include <sys/types.h>
 #include <sys/uio.h>
 
 #include <err.h>
