@@ -16,6 +16,11 @@
 
 #include <stdio.h>
 #include <string.h>
+#ifdef __OpenBSD__
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#endif
 #include <resolv.h>
 #include <cutils/list.h>
 #include <cutils/sockets.h>

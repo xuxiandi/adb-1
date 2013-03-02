@@ -277,6 +277,11 @@ extern char*  adb_strtok_r(char *str, const char *delim, char **saveptr);
 #include <string.h>
 #include <unistd.h>
 
+#ifdef __OpenBSD__
+#include <sys/types.h>
+#include <sys/socket.h>
+#endif
+
 /*
  * TEMP_FAILURE_RETRY is defined by some, but not all, versions of
  * <unistd.h>. (Alas, it is not as standard as we'd hoped!) So, if it's
