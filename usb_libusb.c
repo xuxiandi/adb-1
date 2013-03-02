@@ -246,8 +246,8 @@ void usb_kick(struct usb_handle *h)
 }
 
 int
-check_usb_interface(struct libusb_interface *interface,
-                    struct libusb_device_descriptor *desc,
+check_usb_interface(libusb_interface *interface,
+                    libusb_device_descriptor *desc,
                     struct usb_handle *uh)
 {    
     int e;
@@ -257,7 +257,7 @@ check_usb_interface(struct libusb_interface *interface,
         return -1;
     }
     
-    struct libusb_interface_descriptor *idesc = &interface->altsetting[0];
+    libusb_interface_descriptor *idesc = &interface->altsetting[0];
     
     if (idesc->bNumEndpoints != 2) {
         D("check_usb_interface(): Interface have not 2 endpoints, ignoring\n");
@@ -265,7 +265,7 @@ check_usb_interface(struct libusb_interface *interface,
     }
 
     for (e = 0; e < idesc->bNumEndpoints; e++) {
-        struct libusb_endpoint_descriptor *edesc = &idesc->endpoint[e];
+        libusb_endpoint_descriptor *edesc = &idesc->endpoint[e];
         
         if (edesc->bmAttributes != LIBUSB_TRANSFER_TYPE_BULK) {
             D("check_usb_interface(): Endpoint (%u) is not bulk (%u), ignoring\n",
@@ -304,8 +304,8 @@ check_usb_interface(struct libusb_interface *interface,
 }
 
 int
-check_usb_interfaces(struct libusb_config_descriptor *config,
-                     struct libusb_device_descriptor *desc, struct usb_handle *uh)
+check_usb_interfaces(libusb_config_descriptor *config,
+                     libusb_device_descriptor *desc, struct usb_handle *uh)
 {  
     int i;
     
@@ -347,7 +347,7 @@ register_device(struct usb_handle *uh, const char *serial)
 
     adb_mutex_unlock(&usb_lock);
 
-    register_usb_transport(usb, serial, 1); 
+    register_usb_transport(usb, serial, NULL, 1); 
 
     return (1);
 }
@@ -382,8 +382,8 @@ check_device(libusb_device *dev)
     int found = -1;
     char serial[256] = {0};
 
-    struct libusb_device_descriptor desc;
-    struct libusb_config_descriptor *config = NULL;
+    libusb_device_descriptor desc;
+    libusb_config_descriptor *config = NULL;
     
     int r = libusb_get_device_descriptor(dev, &desc);
 

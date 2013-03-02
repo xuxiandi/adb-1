@@ -19,6 +19,8 @@
 
 #include <limits.h>
 
+#include "transport.h"  /* readx(), writex() */
+
 #define MAX_PAYLOAD 4096
 
 #define A_SYNC 0x434e5953
@@ -27,13 +29,14 @@
 #define A_OKAY 0x59414b4f
 #define A_CLSE 0x45534c43
 #define A_WRTE 0x45545257
+#define A_AUTH 0x48545541
 
 #define A_VERSION 0x01000000        // ADB protocol version
 
 #define ADB_VERSION_MAJOR 1         // Used for help/version information
 #define ADB_VERSION_MINOR 0         // Used for help/version information
 
-#define ADB_SERVER_VERSION    26    // Increment this when we want to force users to start a new adb server
+#define ADB_SERVER_VERSION    31    // Increment this when we want to force users to start a new adb server
 
 typedef struct amessage amessage;
 typedef struct apacket apacket;
@@ -83,6 +86,11 @@ struct asocket {
         ** but packets are still queued for delivery
         */
     int    closing;
+
+        /* flag: quit adbd when both ends close the
+        ** local service socket
+        */
+    int    exit_on_close;
 
         /* the asocket we are connected to
         */
@@ -158,6 +166,8 @@ typedef enum transport_type {
         kTransportHost,
 } transport_type;
 
+#define TOKEN_SIZE 20
+
 struct atransport
 {
     atransport *next;
@@ -174,6 +184,7 @@ struct atransport
     int ref_count;
     unsigned sync_token;
     int connection_state;
+    int online;
     transport_type type;
 
         /* usb handle or socket fd as needed */
@@ -183,11 +194,19 @@ struct atransport
         /* used to identify transports for clients */
     char *serial;
     char *product;
+    char *model;
+    char *device;
+    char *devpath;
     int adb_port; // Use for emulators (local transport)
 
         /* a list of adisconnect callbacks called when the transport is kicked */
     int          kicked;
     adisconnect  disconnects;
+
+    void *key;
+    unsigned char token[TOKEN_SIZE];
+    fdevent auth_fde;
+    unsigned failed_auth_attempts;
 };
 
 
@@ -246,7 +265,7 @@ int adb_main(int is_daemon, int server_port);
 ** get_device_transport does an acquire on your behalf before returning
 */
 void init_transport_registration(void);
-int  list_transports(char *buf, size_t  bufsize);
+int  list_transports(char *buf, size_t  bufsize, int long_listing);
 void update_transports(void);
 
 asocket*  create_device_tracker(void);
@@ -279,7 +298,7 @@ void register_socket_transport(int s, const char *serial, int port, int local);
 void unregister_transport(atransport *t);
 void unregister_all_tcp_transports();
 
-void register_usb_transport(usb_handle *h, const char *serial, unsigned writeable);
+void register_usb_transport(usb_handle *h, const char *serial, const char *devpath, unsigned writeable);
 
 /* this should only be used for transports with connection_state == CS_NOPERM */
 void unregister_usb_transport(usb_handle *usb);
@@ -302,6 +321,11 @@ int       create_jdwp_connection_fd(int  jdwp_pid);
 #endif
 
 #if !ADB_HOST
+typedef enum {
+    BACKUP,
+    RESTORE
+} BackupOperation;
+int backup_service(BackupOperation operation, char* args);
 void framebuffer_service(int fd, void *cookie);
 void log_service(int fd, void *cookie);
 void remount_service(int fd, void *cookie);
@@ -315,13 +339,6 @@ void put_apacket(apacket *p);
 int check_header(apacket *p);
 int check_data(apacket *p);
 
-/* convenience wrappers around read/write that will retry on
-** EINTR and/or short read/write.  Returns 0 on success, -1
-** on error or EOF.
-*/
-int readx(int fd, void *ptr, size_t len);
-int writex(int fd, const void *ptr, size_t len);
-
 /* define ADB_TRACE to 1 to enable tracing support, or 0 to disable it */
 
 #define  ADB_TRACE    1
@@ -331,42 +348,89 @@ int writex(int fd, const void *ptr, size_t len);
  * the adb_trace_init() function implemented in adb.c
  */
 typedef enum {
-    TRACE_ADB = 0,
+    TRACE_ADB = 0,   /* 0x001 */
     TRACE_SOCKETS,
     TRACE_PACKETS,
     TRACE_TRANSPORT,
-    TRACE_RWX,
+    TRACE_RWX,       /* 0x010 */
     TRACE_USB,
     TRACE_SYNC,
     TRACE_SYSDEPS,
-    TRACE_JDWP,
+    TRACE_JDWP,      /* 0x100 */
+    TRACE_SERVICES,
+    TRACE_AUTH,
 } AdbTrace;
 
 #if ADB_TRACE
 
-  int     adb_trace_mask;
+#if !ADB_HOST
+/*
+ * When running inside the emulator, guest's adbd can connect to 'adb-debug'
+ * qemud service that can display adb trace messages (on condition that emulator
+ * has been started with '-debug adb' option).
+ */
 
+/* Delivers a trace message to the emulator via QEMU pipe. */
+void adb_qemu_trace(const char* fmt, ...);
+/* Macro to use to send ADB trace messages to the emulator. */
+#define DQ(...)    adb_qemu_trace(__VA_ARGS__)
+#else
+#define DQ(...) ((void)0)
+#endif  /* !ADB_HOST */
+
+  extern int     adb_trace_mask;
+  extern unsigned char    adb_trace_output_count;
   void    adb_trace_init(void);
 
 #  define ADB_TRACING  ((adb_trace_mask & (1 << TRACE_TAG)) != 0)
 
   /* you must define TRACE_TAG before using this macro */
-  #define  D(...)                                      \
+#  define  D(...)                                      \
         do {                                           \
-            if (ADB_TRACING)                           \
+            if (ADB_TRACING) {                         \
+                int save_errno = errno;                \
+                adb_mutex_lock(&D_lock);               \
+                fprintf(stderr, "%s::%s():",           \
+                        __FILE__, __FUNCTION__);       \
+                errno = save_errno;                    \
                 fprintf(stderr, __VA_ARGS__ );         \
+                fflush(stderr);                        \
+                adb_mutex_unlock(&D_lock);             \
+                errno = save_errno;                    \
+           }                                           \
+        } while (0)
+#  define  DR(...)                                     \
+        do {                                           \
+            if (ADB_TRACING) {                         \
+                int save_errno = errno;                \
+                adb_mutex_lock(&D_lock);               \
+                errno = save_errno;                    \
+                fprintf(stderr, __VA_ARGS__ );         \
+                fflush(stderr);                        \
+                adb_mutex_unlock(&D_lock);             \
+                errno = save_errno;                    \
+           }                                           \
         } while (0)
 #else
 #  define  D(...)          ((void)0)
+#  define  DR(...)         ((void)0)
 #  define  ADB_TRACING     0
 #endif
 
 
-#if !TRACE_PACKETS
+#if !DEBUG_PACKETS
 #define print_packet(tag,p) do {} while (0)
 #endif
 
-#define DEFAULT_ADB_PORT 5037
+#if ADB_HOST_ON_TARGET
+/* adb and adbd are coexisting on the target, so use 5038 for adb
+ * to avoid conflicting with adbd's usage of 5037
+ */
+#  define DEFAULT_ADB_PORT 5038
+#else
+#  define DEFAULT_ADB_PORT 5037
+#endif
+
 #define DEFAULT_ADB_LOCAL_TRANSPORT_PORT 5555
 
 #define ADB_CLASS              0xff
@@ -403,10 +467,23 @@ int connection_state(atransport *t);
 #define CS_HOST       3
 #define CS_RECOVERY   4
 #define CS_NOPERM     5 /* Insufficient permissions to communicate with the device */
+#define CS_SIDELOAD   6
 
 extern int HOST;
+extern int SHELL_EXIT_NOTIFY_FD;
 
 #define CHUNK_SIZE (64*1024)
+
+#if !ADB_HOST
+#define USB_ADB_PATH     "/dev/android_adb"
+
+#define USB_FFS_ADB_PATH  "/dev/usb-ffs/adb/"
+#define USB_FFS_ADB_EP(x) USB_FFS_ADB_PATH#x
+
+#define USB_FFS_ADB_EP0   USB_FFS_ADB_EP(ep0)
+#define USB_FFS_ADB_OUT   USB_FFS_ADB_EP(ep1)
+#define USB_FFS_ADB_IN    USB_FFS_ADB_EP(ep2)
+#endif
 
 int sendfailmsg(int fd, const char *reason);
 int handle_host_request(char *service, transport_type ttype, char* serial, int reply_fd, asocket *s);
